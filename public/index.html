@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chessimus — Chess Coach</title>
+    <link rel="stylesheet" href="/vendor/chessboard.min.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Input view -->
+    <main class="input-page" id="inputPanel">
+      <div class="input-wrap">
+        <h1 class="logo">♟ Chessimus</h1>
+        <p class="tagline">Paste a PGN or game link. Get coached.</p>
+
+        <!-- Tab toggle -->
+        <div class="input-tabs">
+          <button class="input-tab active" data-tab="analyze">Analyze Game</button>
+          <button class="input-tab" data-tab="scout">Scout Player</button>
+        </div>
+
+        <!-- Analyze tab -->
+        <div class="tab-content" id="analyzeTab">
+          <input type="text" id="gameUrl" class="input-field" placeholder="Lichess or Chess.com game link..." />
+          <div class="input-or"><span>or</span></div>
+          <textarea id="pgn" class="input-field" rows="5" placeholder="Paste PGN here..."></textarea>
+          <div class="input-actions">
+            <button id="analyzeBtn" class="btn-primary">Analyze Game</button>
+            <button id="sampleBtn" class="btn-ghost">Load Sample</button>
+          </div>
+        </div>
+
+        <!-- Scout tab -->
+        <div class="tab-content" id="scoutTab" style="display:none;">
+          <input type="text" id="scoutUsername" class="input-field" placeholder="Username..." />
+          <div class="platform-toggle">
+            <button class="platform-btn active" data-platform="lichess">Lichess</button>
+            <button class="platform-btn" data-platform="chesscom">Chess.com</button>
+          </div>
+          <div class="input-actions">
+            <button id="scoutBtn" class="btn-primary">Scout Player</button>
+          </div>
+        </div>
+
+        <div id="status" class="status-text"></div>
+      </div>
+    </main>
+
+    <!-- Analysis view -->
+    <div class="analysis-page" id="analysisSection" style="display:none;">
+
+      <!-- Top bar -->
+      <header class="topbar">
+        <button id="newAnalysisBtn" class="topbar-btn">← New Game</button>
+        <span class="topbar-title">♟ Chessimus</span>
+        <span class="topbar-opening" id="openingName"></span>
+      </header>
+
+      <!-- Progress -->
+      <div class="progress-bar" id="progressSection" style="display:none;">
+        <div class="progress-fill" id="progressFill"></div>
+        <span class="progress-label" id="progressText">Starting...</span>
+      </div>
+
+      <!-- Main analysis grid -->
+      <div class="analysis-grid">
+
+        <!-- Eval bar (vertical) -->
+        <div class="eval-col">
+          <div class="eval-track" id="evalBar">
+            <div class="eval-white" id="evalFill"></div>
+          </div>
+          <span class="eval-num" id="evalLabel">0.0</span>
+        </div>
+
+        <!-- Board -->
+        <div class="board-col">
+          <div id="board" class="the-board"></div>
+          <div class="board-controls">
+            <button id="navStart" class="ctrl-btn" aria-label="Start">⏮</button>
+            <button id="navPrev" class="ctrl-btn" aria-label="Back">◀</button>
+            <button id="flipBtn" class="ctrl-btn" aria-label="Flip board">🔄</button>
+            <button id="navNext" class="ctrl-btn" aria-label="Next">▶</button>
+            <button id="navEnd" class="ctrl-btn" aria-label="End">⏭</button>
+          </div>
+        </div>
+
+        <!-- Right panel: coach on top, moves below -->
+        <div class="right-col">
+          <!-- Summary strip -->
+          <div class="summary-strip" id="summaryPanel"></div>
+
+          <!-- Coach (above moves, always visible) -->
+          <div class="coach" id="coachPanel">
+            <div class="coach-empty">Click a move for coaching</div>
+          </div>
+
+          <!-- Filter -->
+          <div class="filter-row">
+            <button class="filter-btn active" data-filter="all">All Moves</button>
+            <button class="filter-btn" data-filter="issues">Mistakes Only</button>
+          </div>
+
+          <!-- Move list -->
+          <div class="moves-scroll" id="moveList"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scout report view -->
+    <div class="scout-page" id="scoutSection" style="display:none;">
+      <header class="topbar">
+        <button id="scoutBackBtn" class="topbar-btn">← Back</button>
+        <span class="topbar-title">♟ Chessimus Scout</span>
+        <span class="topbar-opening" id="scoutPlayerName"></span>
+      </header>
+      <div class="scout-filters" id="scoutFilters">
+        <div class="option-toggle" id="scoutTcFilter">
+          <button class="option-btn active" data-value="all">All</button>
+          <button class="option-btn" data-value="bullet">Bullet</button>
+          <button class="option-btn" data-value="blitz">Blitz</button>
+          <button class="option-btn" data-value="rapid">Rapid</button>
+        </div>
+        <div class="option-toggle" id="scoutCountFilter">
+          <button class="option-btn" data-value="50">Last 50</button>
+          <button class="option-btn" data-value="300">Last 300</button>
+          <button class="option-btn active" data-value="0">All</button>
+        </div>
+        <button id="aiReportBtn" class="btn-primary btn-sm">Generate AI Report</button>
+      </div>
+      <div class="scout-content" id="scoutContent"></div>
+    </div>
+
+    <script src="/vendor/jquery.min.js"></script>
+    <script src="/vendor/chessboard.min.js"></script>
+    <script src="/vendor/chess.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
