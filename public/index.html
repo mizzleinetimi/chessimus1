@@ -117,19 +117,32 @@
       </header>
       <div class="scout-filters" id="scoutFilters">
         <div class="option-toggle" id="scoutTcFilter">
-          <button class="option-btn active" data-value="all">All</button>
+          <button class="option-btn" data-value="all">All</button>
+          <button class="option-btn active" data-value="recent">Recent</button>
           <button class="option-btn" data-value="bullet">Bullet</button>
           <button class="option-btn" data-value="blitz">Blitz</button>
           <button class="option-btn" data-value="rapid">Rapid</button>
         </div>
         <div class="option-toggle" id="scoutCountFilter">
           <button class="option-btn" data-value="50">Last 50</button>
-          <button class="option-btn" data-value="300">Last 300</button>
-          <button class="option-btn active" data-value="0">All</button>
+          <button class="option-btn active" data-value="300">Last 300</button>
+          <button class="option-btn" data-value="0">All</button>
         </div>
         <button id="aiReportBtn" class="btn-primary btn-sm">Generate AI Report</button>
       </div>
       <div class="scout-content" id="scoutContent"></div>
+    </div>
+
+    <!-- Scout loading overlay -->
+    <div class="scout-loading" id="scoutLoading" style="display:none;">
+      <div class="scout-loading-inner">
+        <div class="scout-loading-knight">♞</div>
+        <div class="scout-loading-pct" id="scoutLoadingPct">0%</div>
+        <div class="scout-loading-text" id="scoutLoadingText">Preparing scout...</div>
+        <div class="scout-loading-bar">
+          <div class="scout-loading-fill" id="scoutLoadingFill"></div>
+        </div>
+      </div>
     </div>
 
     <script src="/vendor/jquery.min.js"></script>

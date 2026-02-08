@@ -298,59 +298,88 @@ async function handleScout(req, res) {
   let body = '';
   req.on('data', (chunk) => { body += chunk.toString(); });
   req.on('end', async () => {
+    let parsed;
     try {
-      const { username, platform } = JSON.parse(body);
-      if (!username || !platform) {
-        return sendJson(res, 400, { error: 'Username and platform required.' });
-      }
+      parsed = JSON.parse(body);
+    } catch (e) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Invalid JSON');
+      return;
+    }
 
-      log('info', 'Scout request', { username, platform });
+    const { username, platform } = parsed;
+    if (!username || !platform) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Username and platform required.');
+      return;
+    }
 
-      const uTrimmed = username.trim();
-      const pLower = platform.toLowerCase();
+    // SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    });
 
-      let games;
-      let profile;
+    const send = (event, data) => {
+      if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
 
+    log('info', 'Scout request', { username, platform });
+
+    const uTrimmed = username.trim();
+    const pLower = platform.toLowerCase();
+
+    let games = [];
+    let profile = null;
+
+    try {
       if (pLower === 'lichess') {
-        // Fetch each time control separately so recent-TC bias doesn't hide data
-        // Stagger requests to avoid Lichess rate limiting
         const perTc = ['bullet', 'blitz', 'rapid'];
+        send('progress', { step: 'profile', message: 'Fetching player profile...' });
         profile = await fetchPlayerProfile(uTrimmed, pLower);
-        games = [];
-        for (const tc of perTc) {
+        send('progress', { step: 'profile', message: 'Profile loaded' });
+
+        for (let i = 0; i < perTc.length; i++) {
+          const tc = perTc[i];
+          send('progress', { step: tc, message: `Fetching ${tc} games...`, current: i, total: perTc.length });
           try {
             const tcGames = await fetchPlayerGames(uTrimmed, pLower, 500, tc);
             games.push(...tcGames);
+            send('progress', { step: tc, message: `${tcGames.length} ${tc} games loaded`, current: i + 1, total: perTc.length, count: tcGames.length });
           } catch (e) {
             log('warn', 'TC fetch failed', { tc, error: e.message });
+            send('progress', { step: tc, message: `No ${tc} games found`, current: i + 1, total: perTc.length, count: 0 });
           }
         }
-        // Sort newest first by date
         games.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       } else {
-        // Chess.com: no server-side TC filter, fetch broadly
+        send('progress', { step: 'profile', message: 'Fetching player profile...' });
         const [gamesResult, profileResult] = await Promise.all([
           fetchPlayerGames(uTrimmed, pLower, 1000, 'all'),
           fetchPlayerProfile(uTrimmed, pLower)
         ]);
         games = gamesResult;
         profile = profileResult;
+        send('progress', { step: 'games', message: `${games.length} games loaded`, current: 1, total: 1, count: games.length });
       }
 
       if (!games.length) {
-        return sendJson(res, 404, { error: 'No recent games found for this player.' });
+        send('error', { error: 'No recent games found for this player.' });
+        if (!res.writableEnded) res.end();
+        return;
       }
 
       const perfs = profile ? profile.perfs : {};
-
       log('info', 'Scout games total', { count: games.length, tcBreakdown: games.reduce((acc, g) => { acc[g.timeControl] = (acc[g.timeControl] || 0) + 1; return acc; }, {}) });
 
-      sendJson(res, 200, { games, perfs });
+      send('done', { games, perfs });
     } catch (err) {
       log('warn', 'Scout failed', { error: err.message });
-      sendJson(res, 500, { error: err.message || 'Scout failed.' });
+      send('error', { error: err.message || 'Scout failed.' });
     }
+
+    if (!res.writableEnded) res.end();
   });
 }
 

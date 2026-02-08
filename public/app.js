@@ -1024,8 +1024,8 @@ let scoutPlatform = 'lichess';
 let scoutAllGames = [];   // raw games from server
 let scoutPerfs = {};       // player ratings by time control
 let scoutUsername = '';
-let scoutActiveTc = 'all';
-let scoutActiveCount = 0;  // 0 = all
+let scoutActiveTc = 'recent';
+let scoutActiveCount = 300;  // default to Last 300
 let scoutAiReport = null;  // cached Gemini report
 
 // Tab switching
@@ -1049,7 +1049,7 @@ document.querySelectorAll('.platform-btn').forEach((btn) => {
   });
 });
 
-// Scout button — fetch all games, store locally, aggregate + render
+// Scout button — fetch all games via SSE stream with loading overlay
 document.getElementById('scoutBtn').addEventListener('click', async () => {
   const username = document.getElementById('scoutUsername').value.trim();
   if (!username) {
@@ -1057,45 +1057,150 @@ document.getElementById('scoutBtn').addEventListener('click', async () => {
     return;
   }
 
-  statusEl.textContent = 'Fetching games...';
   document.getElementById('scoutBtn').disabled = true;
+  statusEl.textContent = '';
+  showScoutLoading('Connecting...', 0);
 
   try {
-    const resp = await fetch('/scout', {
+    const response = await fetch('/scout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, platform: scoutPlatform })
     });
-    const data = await resp.json();
 
-    if (!resp.ok) {
-      statusEl.textContent = data.error || 'Scout failed.';
+    if (!response.ok) {
+      hideScoutLoading();
+      statusEl.textContent = 'Scout failed.';
       document.getElementById('scoutBtn').disabled = false;
       return;
     }
 
-    // Store raw data in client state
-    scoutAllGames = data.games || [];
-    scoutPerfs = data.perfs || {};
-    scoutUsername = username;
-    scoutAiReport = null;
-    scoutActiveTc = 'all';
-    scoutActiveCount = 0;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finished = false;
 
-    // Reset filter UI to defaults
-    document.querySelectorAll('#scoutTcFilter .option-btn').forEach((b) => {
-      b.classList.toggle('active', b.dataset.value === 'all');
-    });
-    document.querySelectorAll('#scoutCountFilter .option-btn').forEach((b) => {
-      b.classList.toggle('active', b.dataset.value === '0');
-    });
+    while (!finished) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-    showScoutReport();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      let eventType = null;
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith('data: ') && eventType) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (eventType === 'progress') {
+              // Profile = 0-5%, then each TC = equal share of 5-95%
+              let pct = 0;
+              if (data.step === 'profile') {
+                pct = 5;
+              } else if (data.total) {
+                pct = 5 + Math.round(((data.current || 0) / data.total) * 90);
+              }
+              updateScoutLoading(data.message, pct);
+            } else if (eventType === 'done') {
+              scoutAllGames = data.games || [];
+              scoutPerfs = data.perfs || {};
+              scoutUsername = username;
+              scoutAiReport = null;
+              scoutActiveTc = 'recent';
+              scoutActiveCount = 300;
+              document.querySelectorAll('#scoutTcFilter .option-btn').forEach((b) => {
+                b.classList.toggle('active', b.dataset.value === 'recent');
+              });
+              document.querySelectorAll('#scoutCountFilter .option-btn').forEach((b) => {
+                b.classList.toggle('active', b.dataset.value === '300');
+              });
+              updateScoutLoading('Building report...', 100);
+              // Brief pause so user sees 100%
+              await new Promise((r) => setTimeout(r, 400));
+              hideScoutLoading();
+              showScoutReport();
+              finished = true;
+            } else if (eventType === 'error') {
+              hideScoutLoading();
+              statusEl.textContent = data.error || 'Scout failed.';
+              finished = true;
+            }
+          } catch (e) { /* skip bad JSON */ }
+          eventType = null;
+        }
+      }
+    }
   } catch (err) {
+    hideScoutLoading();
     statusEl.textContent = 'Scout failed: ' + err.message;
   }
   document.getElementById('scoutBtn').disabled = false;
 });
+
+// ── Scout loading overlay helpers ──
+let scoutLoadingTarget = 0;   // real target percentage from SSE events
+let scoutLoadingCurrent = 0;  // displayed percentage (creeps toward target)
+let scoutLoadingTimer = null;
+
+function showScoutLoading(text, pct) {
+  const overlay = document.getElementById('scoutLoading');
+  overlay.style.display = '';
+  scoutLoadingTarget = pct || 0;
+  scoutLoadingCurrent = 0;
+  renderScoutLoadingPct(0);
+  document.getElementById('scoutLoadingText').textContent = text || 'Preparing scout...';
+  document.getElementById('scoutLoadingFill').style.width = '0%';
+  startScoutLoadingTicker();
+}
+
+function updateScoutLoading(message, pct) {
+  scoutLoadingTarget = Math.min(100, pct || 0);
+  document.getElementById('scoutLoadingText').textContent = message;
+}
+
+function hideScoutLoading() {
+  stopScoutLoadingTicker();
+  document.getElementById('scoutLoading').style.display = 'none';
+}
+
+function renderScoutLoadingPct(val) {
+  const rounded = Math.round(val);
+  document.getElementById('scoutLoadingPct').textContent = rounded + '%';
+  document.getElementById('scoutLoadingFill').style.width = rounded + '%';
+}
+
+function startScoutLoadingTicker() {
+  stopScoutLoadingTicker();
+  scoutLoadingTimer = setInterval(() => {
+    if (scoutLoadingCurrent >= 100) { stopScoutLoadingTicker(); return; }
+
+    const gap = scoutLoadingTarget - scoutLoadingCurrent;
+    if (gap > 1) {
+      // Jump a fraction of the gap — fast at first, slows as it approaches
+      scoutLoadingCurrent += Math.max(0.3, gap * 0.12);
+    } else if (scoutLoadingCurrent < scoutLoadingTarget) {
+      // Close the last bit
+      scoutLoadingCurrent = scoutLoadingTarget;
+    } else {
+      // Creep slowly past current target (fake progress between real events)
+      // Slow down as we get closer to the next likely checkpoint
+      const nextCheckpoint = scoutLoadingTarget + 30;
+      const room = nextCheckpoint - scoutLoadingCurrent;
+      const creep = Math.max(0.08, room * 0.015);
+      scoutLoadingCurrent = Math.min(scoutLoadingCurrent + creep, scoutLoadingTarget + 25);
+    }
+
+    scoutLoadingCurrent = Math.min(scoutLoadingCurrent, 100);
+    renderScoutLoadingPct(scoutLoadingCurrent);
+  }, 180);
+}
+
+function stopScoutLoadingTicker() {
+  if (scoutLoadingTimer) { clearInterval(scoutLoadingTimer); scoutLoadingTimer = null; }
+}
 
 // Back button
 document.getElementById('scoutBackBtn').addEventListener('click', () => {
@@ -1158,12 +1263,18 @@ document.getElementById('aiReportBtn').addEventListener('click', async () => {
 function getFilteredScoutGames() {
   let games = scoutAllGames;
 
-  // Filter by time control
-  if (scoutActiveTc !== 'all') {
+  // "recent" and "all" both include all TCs; bullet/blitz/rapid filter by TC
+  if (scoutActiveTc !== 'all' && scoutActiveTc !== 'recent') {
     games = games.filter((g) => g.timeControl === scoutActiveTc);
   }
 
-  // Limit by count (most recent first — games come newest-first from API)
+  // "recent" sorts by date (newest first) then takes the count limit
+  // Games should already be sorted newest-first, but ensure it
+  if (scoutActiveTc === 'recent') {
+    games = [...games].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }
+
+  // Limit by count
   if (scoutActiveCount > 0 && games.length > scoutActiveCount) {
     games = games.slice(0, scoutActiveCount);
   }

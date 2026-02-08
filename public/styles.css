@@ -672,6 +672,70 @@ textarea.input-field {
 }
 
 /* ═══════════════════════════════
+   SCOUT LOADING OVERLAY
+   ═══════════════════════════════ */
+.scout-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(26, 23, 19, 0.92);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: scoutOverlayIn 0.25s ease;
+}
+@keyframes scoutOverlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.scout-loading-inner {
+  text-align: center;
+  max-width: 340px;
+  padding: 40px 32px;
+}
+.scout-loading-knight {
+  font-size: 4.5rem;
+  line-height: 1;
+  margin-bottom: 6px;
+  animation: knightBounce 1.2s ease-in-out infinite;
+  filter: drop-shadow(0 4px 20px rgba(127, 173, 57, 0.3));
+}
+@keyframes knightBounce {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  30% { transform: translateY(-18px) rotate(-8deg); }
+  60% { transform: translateY(-6px) rotate(4deg); }
+}
+.scout-loading-pct {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+}
+.scout-loading-text {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text2);
+  margin-bottom: 16px;
+}
+.scout-loading-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--surface3);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.scout-loading-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 3px;
+  transition: width 0.15s linear;
+}
+
+/* ═══════════════════════════════
    SCOUT PAGE
    ═══════════════════════════════ */
 .scout-page {
