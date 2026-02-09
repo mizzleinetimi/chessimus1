@@ -1372,7 +1372,21 @@ class StockfishEngine {
   }
 
   async init() {
+    log('info', 'Spawning Stockfish', { path: this.binaryPath });
     this.process = spawn(this.binaryPath, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    this.process.on('error', (err) => {
+      log('error', 'Stockfish spawn error', { error: err.message, path: this.binaryPath });
+    });
+
+    this.process.stderr.on('data', (data) => {
+      log('warn', 'Stockfish stderr', { output: data.toString().trim() });
+    });
+
+    this.process.on('exit', (code, signal) => {
+      log('info', 'Stockfish exited', { code, signal });
+    });
+
     this.rl = readline.createInterface({ input: this.process.stdout });
     this.rl.on('line', (line) => this._onLine(line));
 
