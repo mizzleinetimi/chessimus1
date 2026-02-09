@@ -1,18 +1,16 @@
 FROM node:20-slim
 
-# Install Stockfish
+# Install Stockfish (Debian puts it in /usr/games/)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends stockfish && \
     rm -rf /var/lib/apt/lists/* && \
-    which stockfish
+    ls -la /usr/games/stockfish
 
 WORKDIR /app
 
-# Install dependencies
 COPY package.json package-lock.json ./
 RUN npm ci --production
 
-# Copy app
 COPY . .
 
 ENV STOCKFISH_PATH=/usr/games/stockfish
