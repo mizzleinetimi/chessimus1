@@ -373,7 +373,13 @@ async function handleScout(req, res) {
       const perfs = profile ? profile.perfs : {};
       log('info', 'Scout games total', { count: games.length, tcBreakdown: games.reduce((acc, g) => { acc[g.timeControl] = (acc[g.timeControl] || 0) + 1; return acc; }, {}) });
 
-      send('done', { games, perfs });
+      // Send games in batches to avoid huge SSE payloads
+      const BATCH = 100;
+      for (let i = 0; i < games.length; i += BATCH) {
+        send('games', { batch: games.slice(i, i + BATCH) });
+      }
+
+      send('done', { perfs });
     } catch (err) {
       log('warn', 'Scout failed', { error: err.message });
       send('error', { error: err.message || 'Scout failed.' });
@@ -399,6 +405,267 @@ async function handleScoutReport(req, res) {
       sendJson(res, 500, { error: err.message || 'Report generation failed.' });
     }
   });
+}
+
+async function handleGenerateRepertoire(req, res) {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk.toString(); });
+  req.on('end', async () => {
+    try {
+      const { opening, color, pgn } = JSON.parse(body);
+      if (!opening || !color || !pgn) {
+        return sendJson(res, 400, { error: 'Opening name, color, and pgn required.' });
+      }
+
+      log('info', 'Repertoire request', { opening, color });
+
+      // 1. Parse the base opening moves
+      const Chess = getChess();
+      const baseMoves = [];
+      const chess = new Chess();
+      const tokens = pgn.replace(/\d+\./g, '').trim().split(/\s+/);
+      for (const t of tokens) {
+        const m = chess.move(t, { sloppy: true });
+        if (!m) break;
+        baseMoves.push(m.san);
+      }
+      const baseFen = chess.fen();
+
+      // 2. Explore continuations from the Lichess masters database
+      const lines = [];
+      // Main line: follow the most popular move at each step for 6 more moves
+      lines.push(await exploreLine(baseMoves, baseFen, 6, 0));
+
+      // Alternative lines: pick the 2nd and 3rd most popular responses at the first branch
+      const firstExplore = await fetchExplorerMoves(baseFen);
+      for (let i = 1; i < Math.min(3, firstExplore.length); i++) {
+        const altMove = firstExplore[i];
+        const altChess = new Chess(baseFen);
+        const altResult = altChess.move(altMove.san, { sloppy: true });
+        if (!altResult) continue;
+        const altMoves = [...baseMoves, altResult.san];
+        const altLine = await exploreLine(altMoves, altChess.fen(), 5, i);
+        lines.push(altLine);
+      }
+
+      if (!lines.length || !lines[0].moves.length) {
+        return sendJson(res, 500, { error: 'Could not find opening lines. Try a different opening.' });
+      }
+
+      // 3. Ask Gemini to explain the key moves (student's color only)
+      const studentMoveIndices = [];
+      const allMovesSample = lines[0].moves;
+      for (let i = 0; i < allMovesSample.length; i++) {
+        const isWhiteMove = i % 2 === 0;
+        if ((color === 'white' && isWhiteMove) || (color === 'black' && !isWhiteMove)) {
+          studentMoveIndices.push(i);
+        }
+      }
+
+      const linesForPrompt = lines.map(l => l.name + ': ' + l.moves.join(' ')).join('\n');
+      const prompt = `You are a chess opening coach. The student is learning the "${opening}" as ${color}.
+
+Here are the main lines from master games:
+${linesForPrompt}
+
+For each line, provide a brief explanation (1-2 sentences) for each of the ${color} moves — what the move controls, threatens, or prepares. Focus on practical ideas, not just naming the move.
+
+Return JSON:
+{
+  "description": "2-3 sentence overview of this opening's key ideas",
+  "lines": [
+    {
+      "name": "line name",
+      "explanations": { "1": "explanation for move 1", "3": "explanation for move 3" }
+    }
+  ]
+}
+
+The explanation keys are 1-indexed move numbers (position in the move list, not full-move numbers). For white: explain moves at positions 1, 3, 5... For black: explain moves at positions 2, 4, 6...
+Return ONLY valid JSON.`;
+
+      const geminiBody = {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 4096,
+          responseMimeType: 'application/json'
+        }
+      };
+
+      const result = await callGemini(GEMINI_PRIMARY_MODEL, geminiBody, { feature: 'repertoire', opening });
+
+      let description = '';
+      if (result.ok) {
+        const parsed = safeParseJson(result.text);
+        if (parsed) {
+          description = parsed.description || '';
+          if (parsed.lines) {
+            for (let i = 0; i < lines.length && i < parsed.lines.length; i++) {
+              lines[i].explanations = parsed.lines[i].explanations || {};
+            }
+          }
+        }
+      }
+
+      sendJson(res, 200, {
+        repertoire: {
+          name: opening,
+          color,
+          description,
+          lines
+        }
+      });
+    } catch (err) {
+      log('warn', 'Repertoire generation failed', { error: err.message });
+      sendJson(res, 500, { error: err.message || 'Repertoire generation failed.' });
+    }
+  });
+}
+
+async function handleExplainOpening(req, res) {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk.toString(); });
+  req.on('end', async () => {
+    try {
+      const { opening, color, lines } = JSON.parse(body);
+      if (!opening || !color || !lines || !lines.length) {
+        return sendJson(res, 400, { error: 'opening, color, and lines required.' });
+      }
+
+      log('info', 'Explain opening request', { opening, color, lineCount: lines.length });
+
+      const linesForPrompt = lines.map(l => l.name + ': ' + l.moves.join(' ')).join('\n');
+      const prompt = `You are a chess opening coach. The student is learning the "${opening}" as ${color}.
+
+Here are the lines to explain:
+${linesForPrompt}
+
+For EVERY move in each line (both white and black moves), provide a brief explanation (1-2 sentences) of what the move does — what it controls, threatens, defends, or prepares. Be practical and specific to the position, not generic.
+
+Return JSON:
+{
+  "description": "2-3 sentence overview of this opening's key ideas and plans",
+  "lines": [
+    {
+      "name": "line name",
+      "explanations": { "1": "explanation for move at position 1", "2": "explanation for move at position 2", "3": "..." }
+    }
+  ]
+}
+
+The explanation keys are 1-indexed positions in the move list (1 = first move, 2 = second move, etc).
+Explain ALL moves, not just the student's color.
+Return ONLY valid JSON.`;
+
+      const geminiBody = {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 8192,
+          responseMimeType: 'application/json'
+        }
+      };
+
+      const result = await callGemini(GEMINI_PRIMARY_MODEL, geminiBody, { feature: 'explain-opening', opening });
+
+      if (!result.ok) {
+        return sendJson(res, 500, { error: result.error || 'Gemini request failed.' });
+      }
+
+      const parsed = safeParseJson(result.text);
+      if (!parsed) {
+        return sendJson(res, 500, { error: 'Failed to parse AI response.' });
+      }
+
+      sendJson(res, 200, {
+        description: parsed.description || '',
+        lines: parsed.lines || []
+      });
+    } catch (err) {
+      log('warn', 'Explain opening failed', { error: err.message });
+      sendJson(res, 500, { error: err.message || 'Failed to explain opening.' });
+    }
+  });
+}
+
+async function handleAskOpening(req, res) {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk.toString(); });
+  req.on('end', async () => {
+    try {
+      const { opening, color, moves, fen, question } = JSON.parse(body);
+      if (!question) {
+        return sendJson(res, 400, { error: 'question is required.' });
+      }
+
+      log('info', 'Ask opening question', { opening, question: question.slice(0, 80) });
+
+      const movesStr = (moves || []).join(' ');
+      const prompt = `You are a friendly, expert chess opening coach. The student is learning the "${opening || 'opening'}" as ${color || 'white'}.
+
+Current position after moves: ${movesStr || '(starting position)'}
+FEN: ${fen || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'}
+
+The student asks: "${question}"
+
+Give a clear, practical answer in 2-4 sentences. Focus on concrete ideas — what squares to control, what pieces to develop, what plans to follow. Speak like a coach sitting next to them, not a textbook.`;
+
+      const geminiBody = {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.4,
+          maxOutputTokens: 512
+        }
+      };
+
+      const result = await callGemini(GEMINI_PRIMARY_MODEL, geminiBody, { feature: 'ask-opening', opening });
+
+      if (!result.ok) {
+        return sendJson(res, 500, { error: result.error || 'Failed to get answer.' });
+      }
+
+      sendJson(res, 200, { answer: result.text.trim() });
+    } catch (err) {
+      log('warn', 'Ask opening failed', { error: err.message });
+      sendJson(res, 500, { error: err.message || 'Failed to answer question.' });
+    }
+  });
+}
+
+async function fetchExplorerMoves(fen) {
+  try {
+    const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}&topGames=0&recentGames=0`;
+    const resp = await fetch(url);
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return (data.moves || []).slice(0, 5);
+  } catch (e) {
+    log('warn', 'Explorer fetch failed', { error: e.message });
+    return [];
+  }
+}
+
+async function exploreLine(baseMoves, fen, depth, lineIndex) {
+  const Chess = getChess();
+  const chess = new Chess(fen);
+  const moves = [...baseMoves];
+  const lineNames = ['Main Line', 'Alternative Line', 'Sideline'];
+
+  for (let d = 0; d < depth; d++) {
+    const explorerMoves = await fetchExplorerMoves(chess.fen());
+    if (!explorerMoves.length) break;
+    const best = explorerMoves[0];
+    const result = chess.move(best.san, { sloppy: true });
+    if (!result) break;
+    moves.push(result.san);
+  }
+
+  return {
+    name: lineNames[lineIndex] || `Variation ${lineIndex + 1}`,
+    moves,
+    explanations: {}
+  };
 }
 
 async function fetchPlayerProfile(username, platform) {
@@ -524,6 +791,7 @@ function parseLichessGame(g, username) {
     timeControl: g.speed || categorizeTimeControl(g.clock?.initial, g.clock?.increment),
     playerRating: isWhite ? g.players?.white?.rating : g.players?.black?.rating,
     opponentRating: opponent?.rating || null,
+    opponentName: opponent?.user?.name || opponent?.user?.id || 'Anonymous',
     moves: g.moves ? g.moves.split(' ').length : 0,
     date: g.createdAt ? new Date(g.createdAt).toISOString().slice(0, 10) : ''
   };
@@ -569,6 +837,7 @@ function parseChesscomGame(g, username) {
     timeControl: g.time_class || '',
     playerRating: playerData?.rating || null,
     opponentRating: opponentData?.rating || null,
+    opponentName: opponentData?.username || 'Anonymous',
     moves: g.pgn ? (g.pgn.match(/\d+\./g) || []).length : 0,
     date: g.end_time ? new Date(g.end_time * 1000).toISOString().slice(0, 10) : ''
   };
@@ -786,6 +1055,21 @@ function createServer() {
 
     if (req.method === 'POST' && requestUrl.pathname === '/scout-report') {
       handleScoutReport(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && requestUrl.pathname === '/generate-repertoire') {
+      handleGenerateRepertoire(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && requestUrl.pathname === '/explain-opening') {
+      handleExplainOpening(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && requestUrl.pathname === '/ask-opening') {
+      handleAskOpening(req, res);
       return;
     }
 

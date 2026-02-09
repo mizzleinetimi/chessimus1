@@ -5,6 +5,7 @@
   "description": "Bare-bones chess analysis MVP using Stockfish + Gemini",
   "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "dev": "node server.js",
     "test:sample": "node scripts/test-sample.js"
   },

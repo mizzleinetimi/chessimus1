@@ -229,7 +229,6 @@ function showArrowTooltip(text, x, y, type) {
   tip.className = 'arrow-tooltip arrow-tooltip-' + type;
   tip.style.display = 'block';
 
-  const boardRect = boardEl.getBoundingClientRect();
   const boardW = boardEl.offsetWidth;
   const boardH = boardEl.offsetHeight;
 
@@ -1002,7 +1001,7 @@ function updateCoachPanel() {
   if (hasCoaching) {
     html += '<div class="coach-body">';
     html += `<div class="coach-summary">${escapeHtml(exp.summary)}</div>`;
-    if (exp.tip) html += `<div class="coach-tip">💡 ${escapeHtml(exp.tip)}</div>`;
+    if (exp.tip) html += `<div class="coach-tip">${escapeHtml(exp.tip)}</div>`;
     if (exp.whyBad || exp.betterMove) {
       html += '<div class="coach-arrow-hint">Hover the arrows on the board for details</div>';
     }
@@ -1036,6 +1035,7 @@ document.querySelectorAll('.input-tab').forEach((tab) => {
     const target = tab.dataset.tab;
     document.getElementById('analyzeTab').style.display = target === 'analyze' ? '' : 'none';
     document.getElementById('scoutTab').style.display = target === 'scout' ? '' : 'none';
+    document.getElementById('trainTab').style.display = target === 'train' ? '' : 'none';
     statusEl.textContent = '';
   });
 });
@@ -1059,6 +1059,7 @@ document.getElementById('scoutBtn').addEventListener('click', async () => {
 
   document.getElementById('scoutBtn').disabled = true;
   statusEl.textContent = '';
+  scoutAllGames = [];
   showScoutLoading('Connecting...', 0);
 
   try {
@@ -1104,8 +1105,10 @@ document.getElementById('scoutBtn').addEventListener('click', async () => {
                 pct = 5 + Math.round(((data.current || 0) / data.total) * 90);
               }
               updateScoutLoading(data.message, pct);
+            } else if (eventType === 'games') {
+              // Accumulate game batches
+              if (data.batch) scoutAllGames.push(...data.batch);
             } else if (eventType === 'done') {
-              scoutAllGames = data.games || [];
               scoutPerfs = data.perfs || {};
               scoutUsername = username;
               scoutAiReport = null;
@@ -1232,10 +1235,17 @@ document.querySelectorAll('#scoutCountFilter .option-btn').forEach((btn) => {
 });
 
 // AI Report button
+const aiReportIcon = '<svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25zM11.5 9.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12z"/></svg>';
+
+
+
 document.getElementById('aiReportBtn').addEventListener('click', async () => {
   const btn = document.getElementById('aiReportBtn');
   btn.disabled = true;
-  btn.textContent = 'Generating...';
+  btn.classList.add('ai-btn-generating');
+  btn.innerHTML = '<span class="ai-sparkle-spin">' + aiReportIcon + '</span> <span class="ai-btn-loading">Analyzing<span class="dot-pulse"></span></span>';
+
+  // No scroll yet — wait until report is ready
 
   try {
     const games = getFilteredScoutGames();
@@ -1249,13 +1259,21 @@ document.getElementById('aiReportBtn').addEventListener('click', async () => {
     if (resp.ok && data.report) {
       scoutAiReport = data.report;
       renderScoutStats();
+      // Auto-scroll to the rendered report
+      setTimeout(() => {
+        const sections = document.getElementById('scoutReportSections');
+        if (sections) sections.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
     }
   } catch (err) {
-    // silently fail, user can retry
+    // Remove skeleton on failure
+    const container = document.getElementById('scoutReportSections');
+    if (container) container.innerHTML = '<div class="scout-section" style="text-align:center;color:var(--text2);padding:20px;">Report generation failed. Try again.</div>';
   }
 
   btn.disabled = false;
-  btn.textContent = 'Generate AI Report';
+  btn.classList.remove('ai-btn-generating');
+  btn.innerHTML = aiReportIcon + ' AI Report';
 });
 
 // ── Client-side filtering + aggregation ──
@@ -1295,6 +1313,7 @@ function aggregateScoutStats(games) {
     howTheyLose: { mate: 0, resign: 0, timeout: 0, other: 0 },
     howTheyWin: { mate: 0, resign: 0, timeout: 0, other: 0 },
     byTimeControl: {},
+    opponents: {},
     ratings: [],
     avgMoveCount: 0
   };
@@ -1343,6 +1362,16 @@ function aggregateScoutStats(games) {
 
     if (g.playerRating) stats.ratings.push(g.playerRating);
     totalMoves += g.moves || 0;
+
+    // Track per-opponent record
+    const opp = g.opponentName || 'Anonymous';
+    if (opp !== 'Anonymous') {
+      if (!stats.opponents[opp]) stats.opponents[opp] = { wins: 0, losses: 0, draws: 0, total: 0 };
+      stats.opponents[opp].total++;
+      if (g.result === 'win') stats.opponents[opp].wins++;
+      else if (g.result === 'loss') stats.opponents[opp].losses++;
+      else stats.opponents[opp].draws++;
+    }
   }
 
   stats.avgMoveCount = games.length ? Math.round(totalMoves / games.length) : 0;
@@ -1354,7 +1383,6 @@ function aggregateScoutStats(games) {
 function showScoutReport() {
   inputPanel.style.display = 'none';
   document.getElementById('scoutSection').style.display = '';
-  document.getElementById('scoutPlayerName').textContent = scoutUsername;
   renderScoutStats();
 }
 
@@ -1363,9 +1391,9 @@ function renderScoutStats() {
   const stats = aggregateScoutStats(games);
   const content = document.getElementById('scoutContent');
 
-  // Pick the right rating from perfs based on active TC filter
+  // Pick the right rating
   let currentRating = '—';
-  if (scoutActiveTc !== 'all' && scoutPerfs[scoutActiveTc]) {
+  if (scoutActiveTc !== 'all' && scoutActiveTc !== 'recent' && scoutPerfs[scoutActiveTc]) {
     currentRating = scoutPerfs[scoutActiveTc];
   } else if (scoutPerfs.rapid) {
     currentRating = scoutPerfs.rapid;
@@ -1379,39 +1407,130 @@ function renderScoutStats() {
   const whiteWR = stats.byColor.white.total ? Math.round((stats.byColor.white.wins / stats.byColor.white.total) * 100) : 0;
   const blackWR = stats.byColor.black.total ? Math.round((stats.byColor.black.wins / stats.byColor.black.total) * 100) : 0;
 
-  let html = '';
-
   if (!games.length) {
-    html = '<div class="coach-empty" style="text-align:center;padding:40px 0;">No games found for this filter combination.</div>';
-    content.innerHTML = html;
+    content.innerHTML = '<div class="coach-empty" style="text-align:center;padding:40px 0;">No games found for this filter combination.</div>';
     return;
   }
 
-  // Stats grid
+  const tcLabel = scoutActiveTc === 'recent' ? 'Recent' : scoutActiveTc === 'all' ? 'All Time Controls' : scoutActiveTc.charAt(0).toUpperCase() + scoutActiveTc.slice(1);
+  const countLabel = scoutActiveCount > 0 ? `Last ${scoutActiveCount}` : 'All';
+
+  let html = '';
+
+  // ── Hero card with donut ring ──
+  const winPct = stats.totalGames ? (stats.overall.wins / stats.totalGames) * 100 : 0;
+  const drawPct = stats.totalGames ? (stats.overall.draws / stats.totalGames) * 100 : 0;
+  const lossPct = 100 - winPct - drawPct;
+
+  const r = 44;
+  const circ = 2 * Math.PI * r;
+  const winArc = (winPct / 100) * circ;
+  const drawArc = (drawPct / 100) * circ;
+  const lossArc = (lossPct / 100) * circ;
+
+  html += '<div class="scout-hero">';
+  html += '<div class="scout-hero-ring">';
+  html += `<svg viewBox="0 0 100 100">`;
+  html += `<circle cx="50" cy="50" r="${r}" fill="none" stroke="#36322c" stroke-width="10"/>`;
+  // Win arc
+  html += `<circle cx="50" cy="50" r="${r}" fill="none" stroke="#7fad39" stroke-width="10" stroke-dasharray="${winArc} ${circ - winArc}" stroke-dashoffset="0" stroke-linecap="round"/>`;
+  // Draw arc
+  html += `<circle cx="50" cy="50" r="${r}" fill="none" stroke="#9e9889" stroke-width="10" stroke-dasharray="${drawArc} ${circ - drawArc}" stroke-dashoffset="${-winArc}" stroke-linecap="round"/>`;
+  // Loss arc
+  html += `<circle cx="50" cy="50" r="${r}" fill="none" stroke="#e74c3c" stroke-width="10" stroke-dasharray="${lossArc} ${circ - lossArc}" stroke-dashoffset="${-(winArc + drawArc)}" stroke-linecap="round"/>`;
+  html += `</svg>`;
+  html += `<div class="scout-hero-ring-label"><span class="scout-hero-wr">${overallWR}%</span><span class="scout-hero-wr-sub">win rate</span></div>`;
+  html += '</div>';
+  html += '<div class="scout-hero-info">';
+  html += `<div class="scout-hero-name">${escapeHtml(scoutUsername)} <span class="scout-hero-rating">${currentRating}</span></div>`;
+  html += `<div class="scout-hero-meta">${tcLabel} · ${countLabel} · ${stats.totalGames} games</div>`;
+  html += '<div class="scout-hero-wld">';
+  html += `<div class="scout-hero-wld-item"><span class="dot dot-win"></span>${stats.overall.wins}W</div>`;
+  html += `<div class="scout-hero-wld-item"><span class="dot dot-draw"></span>${stats.overall.draws}D</div>`;
+  html += `<div class="scout-hero-wld-item"><span class="dot dot-loss"></span>${stats.overall.losses}L</div>`;
+  html += '</div>';
+  html += '</div>';
+  html += '</div>';
+
+  // ── WLD bar ──
+  html += '<div class="scout-wld-bar">';
+  html += `<div class="wld-win" style="width:${winPct}%"></div>`;
+  html += `<div class="wld-draw" style="width:${drawPct}%"></div>`;
+  html += `<div class="wld-loss" style="width:${lossPct}%"></div>`;
+  html += '</div>';
+
+  // ── Color cards ──
+  html += '<div class="scout-color-row">';
+  html += '<div class="scout-color-card">';
+  html += '<div class="scout-color-piece"><svg viewBox="0 0 24 24" width="32" height="32"><path fill="#f0ece4" d="M19 22H5v-2h14v2M17.16 8.26A4.96 4.96 0 0 0 19 4c0-.55-.45-1-1-1s-1 .45-1 1a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3c0-.55-.45-1-1-1s-1 .45-1 1a4.96 4.96 0 0 0 1.84 4.26C5.15 10.5 4 13.07 4 16v2h16v-2c0-2.93-1.15-5.5-2.84-7.74z"/></svg></div>';
+  html += '<div class="scout-color-info">';
+  html += '<div class="scout-color-label">As White</div>';
+  html += `<div class="scout-color-wr">${whiteWR}%</div>`;
+  html += `<div class="scout-color-record">${stats.byColor.white.wins}W / ${stats.byColor.white.losses}L / ${stats.byColor.white.draws}D</div>`;
+  html += '</div></div>';
+  html += '<div class="scout-color-card">';
+  html += '<div class="scout-color-piece"><svg viewBox="0 0 24 24" width="32" height="32"><path fill="#4a453d" d="M19 22H5v-2h14v2M17.16 8.26A4.96 4.96 0 0 0 19 4c0-.55-.45-1-1-1s-1 .45-1 1a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3c0-.55-.45-1-1-1s-1 .45-1 1a4.96 4.96 0 0 0 1.84 4.26C5.15 10.5 4 13.07 4 16v2h16v-2c0-2.93-1.15-5.5-2.84-7.74z"/></svg></div>';
+  html += '<div class="scout-color-info">';
+  html += '<div class="scout-color-label">As Black</div>';
+  html += `<div class="scout-color-wr">${blackWR}%</div>`;
+  html += `<div class="scout-color-record">${stats.byColor.black.wins}W / ${stats.byColor.black.losses}L / ${stats.byColor.black.draws}D</div>`;
+  html += '</div></div>';
+  html += '</div>';
+
+  // ── Stats row ──
   html += '<div class="scout-stats">';
-  html += scoutStat(stats.totalGames, 'Games');
-  html += scoutStat(overallWR + '%', 'Win Rate');
-  html += scoutStat(whiteWR + '%', 'As White');
-  html += scoutStat(blackWR + '%', 'As Black');
-  html += scoutStat(currentRating, 'Rating');
   html += scoutStat(stats.avgMoveCount, 'Avg Moves');
+  const highRating = stats.ratings.length ? Math.max(...stats.ratings) : '—';
+  const lowRating = stats.ratings.length ? Math.min(...stats.ratings) : '—';
+  html += scoutStat(highRating, 'Peak Rating');
+  html += scoutStat(lowRating, 'Low Rating');
+  const tcCounts = Object.entries(stats.byTimeControl).sort((a, b) => b[1].total - a[1].total);
+  const favTc = tcCounts.length ? tcCounts[0][0] : '—';
+  html += scoutStat(favTc.charAt(0).toUpperCase() + favTc.slice(1), 'Fav TC');
   html += '</div>';
 
-  // How they lose / win breakdown
-  html += '<div class="scout-breakdown">';
-  html += scoutBreakdown('How They Lose', stats.howTheyLose, stats.overall.losses, '#e74c3c');
-  html += scoutBreakdown('How They Win', stats.howTheyWin, stats.overall.wins, '#7fad39');
-  html += '</div>';
+  // ── Rivals: Nemesis + Victim ──
+  const oppEntries = Object.entries(stats.opponents).filter(([, v]) => v.total >= 2);
+  const nemesis = oppEntries.filter(([, v]) => v.losses > 0).sort((a, b) => b[1].losses - a[1].losses)[0];
+  const victim = oppEntries.filter(([, v]) => v.wins > 0).sort((a, b) => b[1].wins - a[1].wins)[0];
 
-  // Openings table
+  if (nemesis || victim) {
+    html += '<div class="scout-rivals">';
+    if (nemesis) {
+      const [nName, nRec] = nemesis;
+      html += '<div class="scout-rival-card nemesis">';
+      html += '<div class="rival-icon"><svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M12 2a9 9 0 0 0-9 9c0 3.07 1.64 5.64 4 7.28V20a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1.72c2.36-1.64 4-4.21 4-7.28a9 9 0 0 0-9-9zm-2 15v-2h1v2H10zm3 0v-2h1v2h-1zm3.5-5.5L14 14l-2-3-2 3-2.5-2.5L9 10l1.5 1.5L12 9l1.5 2.5L15 10l1.5 1.5z"/></svg></div>';
+      html += '<div class="rival-info">';
+      html += `<div class="rival-label">Nemesis</div>`;
+      html += `<div class="rival-name">${escapeHtml(nName)}</div>`;
+      html += `<div class="rival-record">You: ${nRec.wins}W / ${nRec.losses}L / ${nRec.draws}D</div>`;
+      html += '</div></div>';
+    }
+    if (victim) {
+      const [vName, vRec] = victim;
+      html += '<div class="scout-rival-card victim">';
+      html += '<div class="rival-icon"><svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm0 10c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4zm0-6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></div>';
+      html += '<div class="rival-info">';
+      html += `<div class="rival-label">Favorite Victim</div>`;
+      html += `<div class="rival-name">${escapeHtml(vName)}</div>`;
+      html += `<div class="rival-record">You: ${vRec.wins}W / ${vRec.losses}L / ${vRec.draws}D</div>`;
+      html += '</div></div>';
+    }
+    html += '</div>';
+  }
+
+  // ── Two-column: Openings + Breakdown ──
   const openings = Object.entries(stats.openings)
     .filter(([, v]) => v.total >= 2)
     .sort((a, b) => b[1].total - a[1].total)
-    .slice(0, 12);
+    .slice(0, 10);
 
+  html += '<div class="scout-two-col">';
+
+  // Openings
+  html += '<div class="scout-openings">';
+  html += '<h3>Opening Repertoire</h3>';
   if (openings.length) {
-    html += '<div class="scout-openings">';
-    html += '<h3>Opening Repertoire</h3>';
     for (const [name, o] of openings) {
       const wr = o.total ? Math.round((o.wins / o.total) * 100) : 0;
       const wrClass = wr >= 60 ? 'good' : wr <= 40 ? 'bad' : 'mid';
@@ -1421,10 +1540,20 @@ function renderScoutStats() {
       html += `<span class="scout-opening-wr ${wrClass}">${wr}%</span>`;
       html += `</div>`;
     }
-    html += '</div>';
+  } else {
+    html += '<div style="color:var(--text2);font-size:0.85rem;padding:8px 0;">Not enough repeated openings.</div>';
   }
+  html += '</div>';
 
-  // AI Report sections (only if generated)
+  // Breakdown
+  html += '<div style="display:flex;flex-direction:column;gap:12px;">';
+  html += scoutBreakdown('How They Lose', stats.howTheyLose, stats.overall.losses, '#e74c3c');
+  html += scoutBreakdown('How They Win', stats.howTheyWin, stats.overall.wins, '#7fad39');
+  html += '</div>';
+
+  html += '</div>';
+
+  // ── AI Report sections ──
   html += '<div class="scout-report" id="scoutReportSections">';
   if (scoutAiReport) {
     html += scoutReportSection('Overview', scoutAiReport.overview);
@@ -1435,9 +1564,12 @@ function renderScoutStats() {
     html += scoutReportSection('How to Beat Them', scoutAiReport.howToBeat);
     html += scoutReportSection('Self-Improvement', scoutAiReport.selfImprovement);
   } else {
-    html += '<div class="scout-section" style="text-align:center;color:var(--text2);padding:20px;">Click "Generate AI Report" above for a detailed coaching analysis.</div>';
+    html += '<div class="scout-section" style="text-align:center;color:var(--text2);padding:20px;">Click "AI Report" above for a detailed coaching analysis.</div>';
   }
   html += '</div>';
+
+  // ── Watermark (visible in share image) ──
+  html += '<div class="scout-watermark"><svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px"><path fill="currentColor" d="M19 22H5v-2h14v2M17.16 8.26A4.96 4.96 0 0 0 19 4c0-.55-.45-1-1-1s-1 .45-1 1a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3c0-.55-.45-1-1-1s-1 .45-1 1a4.96 4.96 0 0 0 1.84 4.26C5.15 10.5 4 13.07 4 16v2h16v-2c0-2.93-1.15-5.5-2.84-7.74z"/></svg> <span>Chessimus</span> — chessimus.com</div>';
 
   content.innerHTML = html;
 }
@@ -1470,4 +1602,817 @@ function scoutBreakdown(title, data, total, color) {
 function scoutReportSection(title, body) {
   if (!body) return '';
   return `<div class="scout-section"><div class="scout-section-title">${escapeHtml(title)}</div><div class="scout-section-body">${escapeHtml(body)}</div></div>`;
+}
+
+// ── Share report as image ──
+document.getElementById('shareReportBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('shareReportBtn');
+  const shareIcon = '<svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11A2.99 2.99 0 0 0 21 5a3 3 0 1 0-5.91.7L8.04 9.81A2.99 2.99 0 0 0 3 12a3 3 0 0 0 5.04 2.19l7.12 4.16c-.05.2-.08.41-.08.63a2.92 2.92 0 1 0 2.92-2.9z"/></svg>';
+  btn.disabled = true;
+  btn.innerHTML = 'Capturing...';
+
+  try {
+    const target = document.getElementById('scoutContent');
+    if (!target || typeof html2canvas === 'undefined') {
+      btn.innerHTML = shareIcon + ' Share';
+      btn.disabled = false;
+      return;
+    }
+
+    const canvas = await html2canvas(target, {
+      backgroundColor: '#1a1713',
+      scale: 2,
+      useCORS: true,
+      logging: false
+    });
+
+    // Try native share first (mobile), fall back to download
+    canvas.toBlob(async (blob) => {
+      if (!blob) { btn.innerHTML = shareIcon + ' Share'; btn.disabled = false; return; }
+
+      const file = new File([blob], `chessimus-scout-${scoutUsername}.png`, { type: 'image/png' });
+
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            title: `${scoutUsername} — Chessimus Scout Report`,
+            files: [file]
+          });
+        } catch (e) {
+          // User cancelled share, that's fine
+        }
+      } else {
+        // Download fallback
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `chessimus-scout-${scoutUsername}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
+      btn.innerHTML = shareIcon + ' Share';
+      btn.disabled = false;
+    }, 'image/png');
+  } catch (err) {
+    btn.innerHTML = shareIcon + ' Share';
+    btn.disabled = false;
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// OPENING TRAINER
+// ═══════════════════════════════════════════════════════════════
+
+let trainBoard = null;
+let trainRepertoire = null;   // { name, color, description, lines: [{ name, moves, explanations }] }
+let trainCurrentLine = 0;
+let trainMoveIndex = 0;
+let trainLineStatuses = [];
+let trainMistakes = 0;
+let openingsDb = [];
+let trainChess = null;
+let trainPhase = 'demo';      // 'demo' = walkthrough, 'drill' = user plays
+let trainDemoTimer = null;     // interval for demo playback
+
+// ── Load openings database ──
+fetch('/openings.json').then(r => r.json()).then(data => {
+  openingsDb = data;
+  initOpeningSearch();
+}).catch(() => { /* openings DB failed to load */ });
+
+function initOpeningSearch() {
+  const input = document.getElementById('trainOpeningInput');
+  const dropdown = document.getElementById('trainSearchResults');
+  if (!input || !dropdown) return;
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    if (q.length < 2) { dropdown.style.display = 'none'; return; }
+    const matches = openingsDb.filter(o => o.name.toLowerCase().includes(q)).slice(0, 12);
+    if (!matches.length) { dropdown.style.display = 'none'; return; }
+
+    dropdown.innerHTML = matches.map(o =>
+      `<button class="search-result-btn" data-name="${escapeHtml(o.name)}" data-pgn="${escapeHtml(o.pgn)}" data-eco="${escapeHtml(o.eco)}">`
+      + `<span class="search-result-eco">${escapeHtml(o.eco)}</span>`
+      + `<span class="search-result-name">${escapeHtml(o.name)}</span>`
+      + `</button>`
+    ).join('');
+    dropdown.style.display = '';
+
+    dropdown.querySelectorAll('.search-result-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        dropdown.style.display = 'none';
+        launchTrainer(btn.dataset.name, btn.dataset.pgn);
+      });
+    });
+  });
+
+  input.addEventListener('focus', () => {
+    if (input.value.trim().length >= 2) input.dispatchEvent(new Event('input'));
+  });
+  document.addEventListener('click', (e) => {
+    if (!dropdown.contains(e.target) && e.target !== input) dropdown.style.display = 'none';
+  });
+}
+
+// Preset buttons → launch immediately
+document.querySelectorAll('.train-preset').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const name = btn.dataset.opening;
+    const match = openingsDb.find(o => o.name === name)
+      || openingsDb.find(o => o.name.toLowerCase().includes(name.toLowerCase()));
+    if (match) launchTrainer(match.name, match.pgn);
+  });
+});
+
+// Back button
+document.getElementById('trainBackBtn').addEventListener('click', () => {
+  clearDemoTimer();
+  document.getElementById('trainSection').style.display = 'none';
+  inputPanel.style.display = '';
+  statusEl.textContent = '';
+  if (trainBoard) { trainBoard.destroy(); trainBoard = null; }
+});
+
+// Retry button — restart drill for current line
+document.getElementById('trainRetryBtn').addEventListener('click', () => {
+  if (!trainRepertoire) return;
+  clearDemoTimer();
+  trainPhase = 'drill';
+  trainMoveIndex = 0;
+  trainMistakes = 0;
+  trainChess = new Chess();
+  clearTrainArrows();
+  if (trainBoard) trainBoard.destroy();
+  trainBoard = Chessboard('trainBoard', {
+    position: 'start',
+    orientation: trainRepertoire.color === 'black' ? 'black' : 'white',
+    pieceTheme: '/img/pieces/{piece}.png',
+    draggable: true,
+    onDrop: onTrainDrop,
+    onSnapEnd: onTrainSnapEnd
+  });
+  initTrainArrowOverlay();
+  updateTrainProgress();
+  setTrainFeedback('info', 'Try again — play the line from memory!');
+  addChatMsg('coach', 'Let\'s try again. Play the correct moves on the board.');
+  if (trainRepertoire.color === 'black') {
+    setTimeout(() => autoPlayOpponent(), 400);
+  }
+});
+
+// Watch Demo button — replay the demo walkthrough
+document.getElementById('trainWatchBtn').addEventListener('click', () => {
+  if (trainRepertoire) startLineDemo(trainCurrentLine);
+});
+
+// Flip button
+document.getElementById('trainFlipBtn').addEventListener('click', () => {
+  if (trainBoard) trainBoard.flip();
+});
+
+// ── Build repertoire client-side from openings DB ──
+function buildRepertoireFromDb(openingName, basePgn) {
+  const chess = new Chess();
+  const baseMoves = [];
+  const tokens = basePgn.replace(/\d+\.\s*/g, '').trim().split(/\s+/).filter(Boolean);
+  for (const t of tokens) {
+    const m = chess.move(t, { sloppy: true });
+    if (!m) break;
+    baseMoves.push(m.san);
+  }
+
+  // Auto-detect color: if the opening name contains "Defense" or "..."/black-typical keywords, play as black
+  const nameLower = openingName.toLowerCase();
+  const isDefense = nameLower.includes('defense') || nameLower.includes('defence')
+    || nameLower.includes('counter') || nameLower.includes('variation');
+  // If the base PGN has an odd number of moves, the last move is white's → student likely plays white
+  // If even, last move is black's → student likely plays black
+  const color = (baseMoves.length % 2 === 0 && isDefense) ? 'black' : 'white';
+
+  // Main line = the base moves
+  const lines = [{ name: 'Main Line', moves: [...baseMoves], explanations: {} }];
+
+  // Find sub-variations from the DB (openings that start with the same moves but go further)
+  const baseKey = baseMoves.join(' ');
+  const subVariations = openingsDb.filter(o => {
+    if (o.name === openingName) return false;
+    const oMoves = parsePgnMoves(o.pgn);
+    if (oMoves.length <= baseMoves.length) return false;
+    // Must share the same prefix
+    for (let i = 0; i < baseMoves.length; i++) {
+      if (oMoves[i] !== baseMoves[i]) return false;
+    }
+    return true;
+  }).slice(0, 5); // max 5 sub-variations
+
+  for (const sub of subVariations) {
+    const subMoves = parsePgnMoves(sub.pgn);
+    const shortName = sub.name.replace(openingName + ': ', '').replace(openingName + ', ', '');
+    lines.push({ name: shortName || sub.name, moves: subMoves, explanations: {} });
+  }
+
+  return { name: openingName, color, description: '', lines };
+}
+
+function parsePgnMoves(pgn) {
+  const chess = new Chess();
+  const moves = [];
+  const tokens = pgn.replace(/\d+\.\s*/g, '').trim().split(/\s+/).filter(Boolean);
+  for (const t of tokens) {
+    // Skip result tokens
+    if (t === '1-0' || t === '0-1' || t === '1/2-1/2' || t === '*') continue;
+    const m = chess.move(t, { sloppy: true });
+    if (!m) break;
+    moves.push(m.san);
+  }
+  return moves;
+}
+
+// ── Launch trainer instantly ──
+function launchTrainer(openingName, pgn) {
+  trainRepertoire = buildRepertoireFromDb(openingName, pgn);
+  if (!trainRepertoire.lines.length || !trainRepertoire.lines[0].moves.length) {
+    statusEl.textContent = 'Could not parse opening moves.';
+    return;
+  }
+
+  // Show training view
+  inputPanel.style.display = 'none';
+  document.getElementById('scoutSection').style.display = 'none';
+  document.getElementById('analysisSection').style.display = 'none';
+  const trainSection = document.getElementById('trainSection');
+  trainSection.style.display = '';
+
+  document.getElementById('trainOpeningName').textContent = trainRepertoire.name;
+  document.getElementById('trainDescription').textContent = trainRepertoire.description || 'Practice the moves on the board. The opponent plays automatically.';
+
+  trainLineStatuses = trainRepertoire.lines.map(() => 'pending');
+  trainCurrentLine = 0;
+  trainLineStatuses[0] = 'in-progress';
+  renderLineSelector();
+
+  // Init board after DOM is visible, start with demo walkthrough
+  setTimeout(() => startLine(0), 80);
+
+  // Fetch AI explanations in background (non-blocking)
+  fetchExplanationsInBackground();
+}
+
+function clearDemoTimer() {
+  if (trainDemoTimer) { clearTimeout(trainDemoTimer); trainDemoTimer = null; }
+}
+
+// ── Training board arrow overlay ──
+let trainArrowSvg = null;
+let trainBoardFlipped = false;
+
+function initTrainArrowOverlay() {
+  const old = document.getElementById('trainArrowOverlay');
+  if (old) old.remove();
+  const boardEl = document.getElementById('trainBoard');
+  if (!boardEl) return;
+  boardEl.style.position = 'relative';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = 'trainArrowOverlay';
+  svg.setAttribute('class', 'arrow-overlay');
+  boardEl.appendChild(svg);
+  trainArrowSvg = svg;
+  trainBoardFlipped = trainRepertoire && trainRepertoire.color === 'black';
+}
+
+function trainSquareToPixel(sq, boardSize) {
+  const file = sq.charCodeAt(0) - 97;
+  const rank = parseInt(sq[1], 10) - 1;
+  const sqSize = boardSize / 8;
+  if (trainBoardFlipped) {
+    return { x: (7 - file) * sqSize + sqSize / 2, y: rank * sqSize + sqSize / 2 };
+  }
+  return { x: file * sqSize + sqSize / 2, y: (7 - rank) * sqSize + sqSize / 2 };
+}
+
+function drawTrainArrow(fromSq, toSq, color, opacity) {
+  if (!trainArrowSvg || !fromSq || !toSq || fromSq === toSq) return;
+  const boardEl = document.getElementById('trainBoard');
+  if (!boardEl) return;
+  const boardSize = boardEl.offsetWidth;
+  const from = trainSquareToPixel(fromSq, boardSize);
+  const to = trainSquareToPixel(toSq, boardSize);
+  const sqSize = boardSize / 8;
+
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const ux = dx / len, uy = dy / len;
+  const px = -uy, py = ux;
+
+  const shaftW = sqSize * 0.22;
+  const headW = sqSize * 0.52;
+  const headL = sqSize * 0.42;
+  const startOff = sqSize * 0.15;
+  const sx = from.x + ux * startOff, sy = from.y + uy * startOff;
+  const tipOff = sqSize * 0.1;
+  const tipX = to.x - ux * tipOff, tipY = to.y - uy * tipOff;
+  const bx = tipX - ux * headL, by = tipY - uy * headL;
+
+  const pts = [
+    `${sx + px * shaftW / 2},${sy + py * shaftW / 2}`,
+    `${bx + px * shaftW / 2},${by + py * shaftW / 2}`,
+    `${bx + px * headW / 2},${by + py * headW / 2}`,
+    `${tipX},${tipY}`,
+    `${bx - px * headW / 2},${by - py * headW / 2}`,
+    `${bx - px * shaftW / 2},${by - py * shaftW / 2}`,
+    `${sx - px * shaftW / 2},${sy - py * shaftW / 2}`
+  ];
+
+  const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+  polygon.setAttribute('points', pts.join(' '));
+  polygon.setAttribute('fill', color);
+  polygon.setAttribute('fill-opacity', opacity);
+  polygon.style.transition = 'fill-opacity 0.3s';
+  trainArrowSvg.appendChild(polygon);
+}
+
+function highlightTrainSquare(sq, color, opacity) {
+  if (!trainArrowSvg || !sq) return;
+  const boardEl = document.getElementById('trainBoard');
+  if (!boardEl) return;
+  const boardSize = boardEl.offsetWidth;
+  const sqSize = boardSize / 8;
+  const file = sq.charCodeAt(0) - 97;
+  const rank = parseInt(sq[1], 10) - 1;
+  const x = trainBoardFlipped ? (7 - file) * sqSize : file * sqSize;
+  const y = trainBoardFlipped ? rank * sqSize : (7 - rank) * sqSize;
+
+  const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  rect.setAttribute('x', x);
+  rect.setAttribute('y', y);
+  rect.setAttribute('width', sqSize);
+  rect.setAttribute('height', sqSize);
+  rect.setAttribute('fill', color);
+  rect.setAttribute('fill-opacity', opacity);
+  trainArrowSvg.appendChild(rect);
+}
+
+function clearTrainArrows() {
+  if (!trainArrowSvg) return;
+  while (trainArrowSvg.firstChild) trainArrowSvg.removeChild(trainArrowSvg.firstChild);
+}
+
+// ── On-board tooltip for training ──
+let trainTooltipEl = null;
+
+function ensureTrainTooltip() {
+  if (trainTooltipEl) return trainTooltipEl;
+  const el = document.createElement('div');
+  el.id = 'trainBoardTooltip';
+  el.className = 'arrow-tooltip arrow-tooltip-best';
+  el.style.display = 'none';
+  const boardEl = document.getElementById('trainBoard');
+  if (boardEl) boardEl.appendChild(el);
+  trainTooltipEl = el;
+  return el;
+}
+
+function showTrainTooltip(text, targetSq) {
+  const tip = ensureTrainTooltip();
+  const boardEl = document.getElementById('trainBoard');
+  if (!boardEl || !text) { hideTrainTooltip(); return; }
+  tip.textContent = text;
+  tip.style.display = 'block';
+
+  const boardW = boardEl.offsetWidth;
+  const boardH = boardEl.offsetHeight;
+
+  // Measure tooltip
+  tip.style.left = '0px';
+  tip.style.top = '0px';
+  const tipW = tip.offsetWidth;
+  const tipH = tip.offsetHeight;
+
+  if (targetSq) {
+    // Position next to the target square
+    const pos = trainSquareToPixel(targetSq, boardW);
+    const sqSize = boardW / 8;
+
+    // Try placing to the right of the square
+    let left = pos.x + sqSize / 2 + 8;
+    let top = pos.y - tipH / 2;
+
+    // If it overflows right, place to the left
+    if (left + tipW > boardW - 4) {
+      left = pos.x - sqSize / 2 - tipW - 8;
+    }
+    // If it still overflows left, center horizontally above/below
+    if (left < 4) {
+      left = Math.max(4, Math.min(pos.x - tipW / 2, boardW - tipW - 4));
+      // Place above the square
+      top = pos.y - sqSize / 2 - tipH - 6;
+      if (top < 4) top = pos.y + sqSize / 2 + 6;
+    }
+
+    // Clamp vertically
+    top = Math.max(4, Math.min(top, boardH - tipH - 4));
+
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  } else {
+    // Fallback: bottom center
+    tip.style.left = Math.max(4, (boardW - tipW) / 2) + 'px';
+    tip.style.top = (boardH - tipH - 8) + 'px';
+  }
+}
+
+function hideTrainTooltip() {
+  if (trainTooltipEl) trainTooltipEl.style.display = 'none';
+}
+
+// ── Chat panel helpers ──
+function addChatMsg(role, text) {
+  const container = document.getElementById('trainChatMessages');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'train-chat-msg ' + role;
+  div.textContent = text;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function clearChat() {
+  const container = document.getElementById('trainChatMessages');
+  if (container) container.innerHTML = '';
+}
+
+// Get from/to squares from a SAN move using a chess instance
+function sanToFromTo(chess, san) {
+  const clone = new Chess(chess.fen());
+  const result = clone.move(san, { sloppy: true });
+  if (result) return { from: result.from, to: result.to };
+  return null;
+}
+
+// ── Demo phase: walk through the line move by move ──
+function startLineDemo(lineIdx) {
+  clearDemoTimer();
+  trainCurrentLine = lineIdx;
+  trainMoveIndex = 0;
+  trainMistakes = 0;
+  trainPhase = 'demo';
+  trainChess = new Chess();
+
+  if (trainBoard) trainBoard.destroy();
+  trainBoard = Chessboard('trainBoard', {
+    position: 'start',
+    orientation: trainRepertoire.color === 'black' ? 'black' : 'white',
+    pieceTheme: '/img/pieces/{piece}.png',
+    draggable: false
+  });
+  initTrainArrowOverlay();
+  trainTooltipEl = null;
+
+  trainLineStatuses[lineIdx] = 'in-progress';
+  renderLineSelector();
+
+  const line = trainRepertoire.lines[lineIdx];
+  setTrainFeedback('demo', `Watch: ${line.name}`);
+  clearChat();
+  addChatMsg('coach', `Let's walk through the ${line.name}. Watch the board.`);
+  renderDemoMoveList(line, -1);
+  updateTrainProgress();
+
+  trainDemoTimer = setTimeout(() => demoNextMove(line), 800);
+}
+
+function demoNextMove(line) {
+  if (trainPhase !== 'demo' || trainMoveIndex >= line.moves.length) {
+    onDemoComplete(line);
+    return;
+  }
+
+  const san = line.moves[trainMoveIndex];
+  const squares = sanToFromTo(trainChess, san);
+  const result = trainChess.move(san, { sloppy: true });
+  if (!result) { trainMoveIndex++; demoNextMove(line); return; }
+
+  trainBoard.position(trainChess.fen(), true);
+
+  clearTrainArrows();
+  if (squares) {
+    highlightTrainSquare(squares.from, '#7fad39', 0.25);
+    highlightTrainSquare(squares.to, '#7fad39', 0.3);
+    drawTrainArrow(squares.from, squares.to, '#7fad39', 0.85);
+  }
+
+  const moveNum = Math.floor(trainMoveIndex / 2) + 1;
+  const isWhite = trainMoveIndex % 2 === 0;
+  const moveLabel = isWhite ? `${moveNum}. ${result.san}` : `${moveNum}... ${result.san}`;
+  const explanation = line.explanations && line.explanations[String(trainMoveIndex + 1)];
+
+  // Short text on the board next to the played move
+  showTrainTooltip(moveLabel + (explanation ? ' — ' + explanation.split('.')[0] + '.' : ''), squares ? squares.to : null);
+
+  // Full explanation in chat
+  if (explanation) {
+    addChatMsg('coach', `${moveLabel}: ${explanation}`);
+  } else {
+    addChatMsg('coach', moveLabel);
+  }
+
+  renderDemoMoveList(line, trainMoveIndex);
+  trainMoveIndex++;
+  updateTrainProgress();
+
+  const pace = explanation ? 2800 : 1200;
+  trainDemoTimer = setTimeout(() => demoNextMove(line), pace);
+}
+
+function onDemoComplete(line) {
+  clearDemoTimer();
+  clearTrainArrows();
+  hideTrainTooltip();
+  setTrainFeedback('info', 'Your turn — play the line from memory!');
+  addChatMsg('coach', 'Now try it yourself! Play the moves from memory.');
+  renderDemoMoveList(line, line.moves.length);
+
+  trainDemoTimer = setTimeout(() => {
+    trainPhase = 'drill';
+    trainMoveIndex = 0;
+    trainChess = new Chess();
+    clearTrainArrows();
+
+    if (trainBoard) trainBoard.destroy();
+    trainBoard = Chessboard('trainBoard', {
+      position: 'start',
+      orientation: trainRepertoire.color === 'black' ? 'black' : 'white',
+      pieceTheme: '/img/pieces/{piece}.png',
+      draggable: true,
+      onDrop: onTrainDrop,
+      onSnapEnd: onTrainSnapEnd
+    });
+    initTrainArrowOverlay();
+    trainTooltipEl = null;
+
+    updateTrainProgress();
+
+    if (trainRepertoire.color === 'black') {
+      setTimeout(() => autoPlayOpponent(), 400);
+    }
+  }, 1500);
+}
+
+function renderDemoMoveList(line, highlightIdx) {
+  const panel = document.getElementById('trainInfoPanel');
+  let html = '<div class="demo-move-list">';
+  for (let i = 0; i < line.moves.length; i++) {
+    const moveNum = Math.floor(i / 2) + 1;
+    const isWhite = i % 2 === 0;
+    if (isWhite) html += `<span class="demo-move-num">${moveNum}.</span>`;
+    const cls = i < highlightIdx ? 'demo-move played' : i === highlightIdx ? 'demo-move current' : 'demo-move upcoming';
+    html += `<span class="${cls}">${escapeHtml(line.moves[i])}</span>`;
+  }
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+// ── Drill phase (user plays) ──
+function startLine(lineIdx) {
+  clearDemoTimer();
+  trainCurrentLine = lineIdx;
+  trainLineStatuses[lineIdx] = 'in-progress';
+  renderLineSelector();
+
+  // Always start with demo walkthrough
+  startLineDemo(lineIdx);
+}
+
+function onTrainDrop(source, target) {
+  if (trainPhase !== 'drill') return 'snapback';
+  const line = trainRepertoire.lines[trainCurrentLine];
+  if (!line || trainMoveIndex >= line.moves.length) return 'snapback';
+
+  const expectedSan = line.moves[trainMoveIndex];
+  const attempt = trainChess.move({ from: source, to: target, promotion: 'q' });
+  if (!attempt) return 'snapback';
+
+  if (attempt.san === expectedSan) {
+    trainMoveIndex++;
+    clearTrainArrows();
+    highlightTrainSquare(source, '#7fad39', 0.25);
+    highlightTrainSquare(target, '#7fad39', 0.3);
+    drawTrainArrow(source, target, '#7fad39', 0.85);
+
+    const explanation = line.explanations && line.explanations[String(trainMoveIndex)];
+    setTrainFeedback('correct', 'Correct! ' + attempt.san);
+    showTrainTooltip(attempt.san + (explanation ? ' — ' + explanation.split('.')[0] + '.' : ''), target);
+    if (explanation) addChatMsg('coach', explanation);
+    updateTrainProgress();
+    if (trainMoveIndex >= line.moves.length) { onLineComplete(); return; }
+    setTimeout(() => {
+      clearTrainArrows();
+      hideTrainTooltip();
+      autoPlayOpponent();
+    }, 500);
+  } else {
+    trainChess.undo();
+    trainMistakes++;
+    clearTrainArrows();
+
+    highlightTrainSquare(source, '#e74c3c', 0.2);
+    highlightTrainSquare(target, '#e74c3c', 0.25);
+    drawTrainArrow(source, target, '#e74c3c', 0.6);
+
+    const correctSquares = sanToFromTo(trainChess, expectedSan);
+    if (correctSquares) {
+      drawTrainArrow(correctSquares.from, correctSquares.to, '#7fad39', 0.85);
+    }
+
+    setTrainFeedback('wrong', `Not quite — you played ${attempt.san}`);
+    showTrainTooltip(`Try ${expectedSan} instead`, correctSquares ? correctSquares.to : target);
+
+    const explanation = line.explanations && line.explanations[String(trainMoveIndex + 1)];
+    let chatText = `You played ${attempt.san} — the correct move is ${expectedSan}.`;
+    if (explanation) chatText += ` ${explanation}`;
+    addChatMsg('coach', chatText);
+    return 'snapback';
+  }
+}
+
+function onTrainSnapEnd() {
+  if (trainBoard && trainChess) trainBoard.position(trainChess.fen());
+}
+
+function autoPlayOpponent() {
+  const line = trainRepertoire.lines[trainCurrentLine];
+  if (!line || trainMoveIndex >= line.moves.length) return;
+
+  const san = line.moves[trainMoveIndex];
+  const squares = sanToFromTo(trainChess, san);
+  const result = trainChess.move(san, { sloppy: true });
+  if (!result) { trainMoveIndex++; if (trainMoveIndex >= line.moves.length) { onLineComplete(); return; } autoPlayOpponent(); return; }
+
+  trainMoveIndex++;
+  trainBoard.position(trainChess.fen(), true);
+
+  // Show opponent's move arrow in a muted color
+  clearTrainArrows();
+  if (squares) {
+    highlightTrainSquare(squares.from, '#8b6f47', 0.2);
+    highlightTrainSquare(squares.to, '#8b6f47', 0.25);
+    drawTrainArrow(squares.from, squares.to, '#8b6f47', 0.6);
+  }
+
+  if (trainMoveIndex >= line.moves.length) { onLineComplete(); return; }
+  setTrainFeedback('info', 'Your move!');
+}
+
+function onLineComplete() {
+  clearTrainArrows();
+  hideTrainTooltip();
+  trainLineStatuses[trainCurrentLine] = 'complete';
+  renderLineSelector();
+  updateTrainProgress();
+
+  const m = trainMistakes;
+  setTrainFeedback('complete', m === 0 ? 'Perfect! No mistakes.' : `Line done! ${m} mistake${m > 1 ? 's' : ''}.`);
+
+  if (trainLineStatuses.every(s => s === 'complete')) {
+    addChatMsg('coach', 'All lines mastered! You\'re ready to play this opening with confidence.');
+    return;
+  }
+  const nextIdx = trainLineStatuses.findIndex(s => s !== 'complete');
+  if (nextIdx !== -1) {
+    addChatMsg('coach', 'Nice work! Moving to the next line...');
+    setTimeout(() => startLine(nextIdx), 1500);
+  }
+}
+
+function renderLineSelector() {
+  const container = document.getElementById('trainLineSelector');
+  if (!trainRepertoire) { container.innerHTML = ''; return; }
+  container.innerHTML = trainRepertoire.lines.map((line, i) => {
+    const status = trainLineStatuses[i] || 'pending';
+    const active = i === trainCurrentLine ? ' active' : '';
+    const label = status === 'complete' ? 'Done' : status === 'in-progress' ? 'Active' : 'Pending';
+    return `<button class="train-line-btn${active}" data-line="${i}"><span>${escapeHtml(line.name)}</span><span class="line-status ${status}">${label}</span></button>`;
+  }).join('');
+  container.querySelectorAll('.train-line-btn').forEach(btn => {
+    btn.addEventListener('click', () => { const i = parseInt(btn.dataset.line, 10); if (!isNaN(i)) startLine(i); });
+  });
+}
+
+function updateTrainProgress() {
+  const panel = document.getElementById('trainProgressPanel');
+  if (!trainRepertoire) { panel.innerHTML = ''; return; }
+  const done = trainLineStatuses.filter(s => s === 'complete').length;
+  const total = trainLineStatuses.length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const line = trainRepertoire.lines[trainCurrentLine];
+  const phaseLabel = trainPhase === 'demo' ? 'Watching' : 'Practicing';
+  panel.innerHTML = `<div class="train-progress-bar"><div class="train-progress-fill" style="width:${pct}%"></div></div>`
+    + `<div class="train-progress-text">${done}/${total} lines · ${phaseLabel} · Move ${trainMoveIndex}/${line ? line.moves.length : 0}</div>`;
+}
+
+function setTrainFeedback(type, text) {
+  const el = document.getElementById('trainFeedback');
+  el.className = 'train-feedback ' + type;
+  el.textContent = text;
+}
+
+// ── Ask question about current position ──
+async function askTrainQuestion(question) {
+  if (!question.trim()) return;
+  addChatMsg('user', question);
+  const input = document.getElementById('trainChatInput');
+  if (input) input.value = '';
+
+  const typingDiv = document.createElement('div');
+  typingDiv.className = 'train-chat-msg coach typing';
+  typingDiv.textContent = 'Thinking...';
+  const container = document.getElementById('trainChatMessages');
+  container.appendChild(typingDiv);
+  container.scrollTop = container.scrollHeight;
+
+  try {
+    const line = trainRepertoire ? trainRepertoire.lines[trainCurrentLine] : null;
+    const movesPlayed = line ? line.moves.slice(0, trainMoveIndex) : [];
+    const resp = await fetch('/ask-opening', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        opening: trainRepertoire ? trainRepertoire.name : '',
+        color: trainRepertoire ? trainRepertoire.color : 'white',
+        moves: movesPlayed,
+        fen: trainChess ? trainChess.fen() : '',
+        question
+      })
+    });
+    typingDiv.remove();
+    if (!resp.ok) { addChatMsg('coach', 'Sorry, couldn\'t process that. Try again.'); return; }
+    const data = await resp.json();
+    addChatMsg('coach', data.answer || 'I\'m not sure about that.');
+  } catch (e) {
+    typingDiv.remove();
+    addChatMsg('coach', 'Connection error. Try again.');
+  }
+}
+
+document.getElementById('trainChatSend').addEventListener('click', () => {
+  askTrainQuestion(document.getElementById('trainChatInput').value);
+});
+document.getElementById('trainChatInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); askTrainQuestion(e.target.value); }
+});
+
+// ── Background AI explanations (non-blocking) ──
+async function fetchExplanationsInBackground() {
+  if (!trainRepertoire || !trainRepertoire.lines.length) return;
+  try {
+    // Send the client's actual lines to the fast explain endpoint
+    const linesToSend = trainRepertoire.lines.map(l => ({ name: l.name, moves: l.moves }));
+
+    const resp = await fetch('/explain-opening', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        opening: trainRepertoire.name,
+        color: trainRepertoire.color,
+        lines: linesToSend
+      })
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    // Merge description
+    if (data.description) {
+      trainRepertoire.description = data.description;
+      const descEl = document.getElementById('trainDescription');
+      if (descEl) descEl.textContent = data.description;
+    }
+
+    // Merge explanations by matching line names
+    if (data.lines && data.lines.length) {
+      for (let ci = 0; ci < trainRepertoire.lines.length; ci++) {
+        const clientLine = trainRepertoire.lines[ci];
+        // Match by index first (most reliable since we sent them in order)
+        if (ci < data.lines.length && data.lines[ci].explanations) {
+          clientLine.explanations = data.lines[ci].explanations;
+        }
+      }
+    }
+
+    // If we're currently in demo, the explanations will show on subsequent moves
+    // If we're in drill, they'll show on the next correct/wrong feedback
+  } catch (e) { /* AI explanations are optional */ }
+}
+
+// ── Public function for scout integration ──
+function trainOpening(openingName, color) {
+  const match = openingsDb.find(o => o.name.toLowerCase() === openingName.toLowerCase())
+    || openingsDb.find(o => o.name.toLowerCase().includes(openingName.toLowerCase()));
+  if (match) {
+    launchTrainer(match.name, match.pgn);
+  }
 }

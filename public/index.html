@@ -11,13 +11,14 @@
     <!-- Input view -->
     <main class="input-page" id="inputPanel">
       <div class="input-wrap">
-        <h1 class="logo">♟ Chessimus</h1>
+        <h1 class="logo"><svg class="logo-icon" viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M19 22H5v-2h14v2M17.16 8.26A4.96 4.96 0 0 0 19 4c0-.55-.45-1-1-1s-1 .45-1 1a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3c0-.55-.45-1-1-1s-1 .45-1 1a4.96 4.96 0 0 0 1.84 4.26C5.15 10.5 4 13.07 4 16v2h16v-2c0-2.93-1.15-5.5-2.84-7.74z"/></svg> Chessimus</h1>
         <p class="tagline">Paste a PGN or game link. Get coached.</p>
 
         <!-- Tab toggle -->
         <div class="input-tabs">
           <button class="input-tab active" data-tab="analyze">Analyze Game</button>
           <button class="input-tab" data-tab="scout">Scout Player</button>
+          <button class="input-tab" data-tab="train">Learn Opening</button>
         </div>
 
         <!-- Analyze tab -->
@@ -43,6 +44,23 @@
           </div>
         </div>
 
+        <!-- Train tab -->
+        <div class="tab-content" id="trainTab" style="display:none;">
+          <div class="train-search-wrap">
+            <input type="text" id="trainOpeningInput" class="input-field" placeholder="Search opening (e.g. Sicilian, London, Caro-Kann)..." autocomplete="off" />
+            <div class="train-search-results" id="trainSearchResults" style="display:none;"></div>
+          </div>
+          <div class="train-presets">
+            <span class="train-presets-label">Popular:</span>
+            <button class="train-preset" data-opening="Italian Game">Italian Game</button>
+            <button class="train-preset" data-opening="Sicilian Defense">Sicilian</button>
+            <button class="train-preset" data-opening="Queen's Gambit">Queen's Gambit</button>
+            <button class="train-preset" data-opening="London System">London</button>
+            <button class="train-preset" data-opening="Caro-Kann Defense">Caro-Kann</button>
+            <button class="train-preset" data-opening="King's Indian Defense">King's Indian</button>
+          </div>
+        </div>
+
         <div id="status" class="status-text"></div>
       </div>
     </main>
@@ -53,7 +71,7 @@
       <!-- Top bar -->
       <header class="topbar">
         <button id="newAnalysisBtn" class="topbar-btn">← New Game</button>
-        <span class="topbar-title">♟ Chessimus</span>
+        <span class="topbar-title"><svg class="topbar-icon" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 22H5v-2h14v2M17.16 8.26A4.96 4.96 0 0 0 19 4c0-.55-.45-1-1-1s-1 .45-1 1a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3c0-.55-.45-1-1-1s-1 .45-1 1a4.96 4.96 0 0 0 1.84 4.26C5.15 10.5 4 13.07 4 16v2h16v-2c0-2.93-1.15-5.5-2.84-7.74z"/></svg> Chessimus</span>
         <span class="topbar-opening" id="openingName"></span>
       </header>
 
@@ -78,11 +96,11 @@
         <div class="board-col">
           <div id="board" class="the-board"></div>
           <div class="board-controls">
-            <button id="navStart" class="ctrl-btn" aria-label="Start">⏮</button>
-            <button id="navPrev" class="ctrl-btn" aria-label="Back">◀</button>
-            <button id="flipBtn" class="ctrl-btn" aria-label="Flip board">🔄</button>
-            <button id="navNext" class="ctrl-btn" aria-label="Next">▶</button>
-            <button id="navEnd" class="ctrl-btn" aria-label="End">⏭</button>
+            <button id="navStart" class="ctrl-btn" aria-label="Start"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
+            <button id="navPrev" class="ctrl-btn" aria-label="Back"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></button>
+            <button id="flipBtn" class="ctrl-btn" aria-label="Flip board"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M7.11 8.53 5.7 7.11C4.8 8.27 4.24 9.61 4.07 11h2.02c.14-.87.49-1.72 1.02-2.47zM6.09 13H4.07c.17 1.39.72 2.73 1.62 3.89l1.41-1.42A6.05 6.05 0 0 1 6.09 13zm1.01 5.32c1.16.9 2.51 1.44 3.9 1.61V17.9a5.98 5.98 0 0 1-2.49-1.01zM13 4.07V1L8.45 5.55 13 10V6.09c2.84.48 5 2.94 5 5.91s-2.16 5.43-5 5.91v2.02c3.95-.49 7-3.85 7-7.93s-3.05-7.44-7-7.93z"/></svg></button>
+            <button id="navNext" class="ctrl-btn" aria-label="Next"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></button>
+            <button id="navEnd" class="ctrl-btn" aria-label="End"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
           </div>
         </div>
 
@@ -112,8 +130,10 @@
     <div class="scout-page" id="scoutSection" style="display:none;">
       <header class="topbar">
         <button id="scoutBackBtn" class="topbar-btn">← Back</button>
-        <span class="topbar-title">♟ Chessimus Scout</span>
-        <span class="topbar-opening" id="scoutPlayerName"></span>
+        <span class="topbar-title"><svg class="topbar-icon" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 22H5v-2h14v2M17.16 8.26A4.96 4.96 0 0 0 19 4c0-.55-.45-1-1-1s-1 .45-1 1a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3c0-.55-.45-1-1-1s-1 .45-1 1a4.96 4.96 0 0 0 1.84 4.26C5.15 10.5 4 13.07 4 16v2h16v-2c0-2.93-1.15-5.5-2.84-7.74z"/></svg> Chessimus Scout</span>
+        <div class="topbar-actions">
+          <button id="shareReportBtn" class="topbar-btn share-btn"><svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px"><path fill="currentColor" d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11A2.99 2.99 0 0 0 21 5a3 3 0 1 0-5.91.7L8.04 9.81A2.99 2.99 0 0 0 3 12a3 3 0 0 0 5.04 2.19l7.12 4.16c-.05.2-.08.41-.08.63a2.92 2.92 0 1 0 2.92-2.9z"/></svg> Share</button>
+        </div>
       </header>
       <div class="scout-filters" id="scoutFilters">
         <div class="option-toggle" id="scoutTcFilter">
@@ -128,15 +148,51 @@
           <button class="option-btn active" data-value="300">Last 300</button>
           <button class="option-btn" data-value="0">All</button>
         </div>
-        <button id="aiReportBtn" class="btn-primary btn-sm">Generate AI Report</button>
+        <button id="aiReportBtn" class="btn-primary btn-sm"><svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-2px"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25zM11.5 9.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12z"/></svg> AI Report</button>
       </div>
       <div class="scout-content" id="scoutContent"></div>
+    </div>
+
+    <!-- Training view -->
+    <div class="train-page" id="trainSection" style="display:none;">
+      <header class="topbar">
+        <button id="trainBackBtn" class="topbar-btn">← Back</button>
+        <span class="topbar-title"><svg class="topbar-icon" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 22H5v-2h14v2M17.16 8.26A4.96 4.96 0 0 0 19 4c0-.55-.45-1-1-1s-1 .45-1 1a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3c0-.55-.45-1-1-1s-1 .45-1 1a4.96 4.96 0 0 0 1.84 4.26C5.15 10.5 4 13.07 4 16v2h16v-2c0-2.93-1.15-5.5-2.84-7.74z"/></svg> Opening Trainer</span>
+        <span class="topbar-opening" id="trainOpeningName"></span>
+      </header>
+      <div class="train-grid">
+        <div class="train-board-col">
+          <div id="trainBoard" class="the-board"></div>
+          <div class="train-feedback" id="trainFeedback"></div>
+          <div class="train-controls">
+            <button id="trainWatchBtn" class="train-action-btn watch"><svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M8 5v14l11-7z"/></svg> Watch Demo</button>
+            <button id="trainRetryBtn" class="train-action-btn retry"><svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg> Try Again</button>
+            <button id="trainFlipBtn" class="train-action-btn flip"><svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M7.11 8.53 5.7 7.11C4.8 8.27 4.24 9.61 4.07 11h2.02c.14-.87.49-1.72 1.02-2.47zM6.09 13H4.07c.17 1.39.72 2.73 1.62 3.89l1.41-1.42A6.05 6.05 0 0 1 6.09 13zm1.01 5.32c1.16.9 2.51 1.44 3.9 1.61V17.9a5.98 5.98 0 0 1-2.49-1.01zM13 4.07V1L8.45 5.55 13 10V6.09c2.84.48 5 2.94 5 5.91s-2.16 5.43-5 5.91v2.02c3.95-.49 7-3.85 7-7.93s-3.05-7.44-7-7.93z"/></svg> Flip</button>
+          </div>
+        </div>
+        <div class="train-right-col">
+          <div class="train-info-panel" id="trainInfoPanel">
+            <div class="train-description" id="trainDescription"></div>
+          </div>
+          <div class="train-line-selector" id="trainLineSelector"></div>
+          <div class="train-progress-panel" id="trainProgressPanel"></div>
+          <div class="train-chat-panel" id="trainChatPanel">
+            <div class="train-chat-messages" id="trainChatMessages">
+              <div class="train-chat-msg coach">Select an opening to begin training.</div>
+            </div>
+            <div class="train-chat-input-row">
+              <input type="text" id="trainChatInput" class="train-chat-field" placeholder="Ask about this move..." autocomplete="off" />
+              <button id="trainChatSend" class="train-chat-send" aria-label="Send"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Scout loading overlay -->
     <div class="scout-loading" id="scoutLoading" style="display:none;">
       <div class="scout-loading-inner">
-        <div class="scout-loading-knight">♞</div>
+        <div class="scout-loading-knight"><svg viewBox="0 0 24 24" width="72" height="72"><path fill="currentColor" d="M19 22H5v-2h14v2M17.16 8.26A4.96 4.96 0 0 0 19 4c0-.55-.45-1-1-1s-1 .45-1 1a3 3 0 0 1-3 3h-4a3 3 0 0 1-3-3c0-.55-.45-1-1-1s-1 .45-1 1a4.96 4.96 0 0 0 1.84 4.26C5.15 10.5 4 13.07 4 16v2h16v-2c0-2.93-1.15-5.5-2.84-7.74z"/></svg></div>
         <div class="scout-loading-pct" id="scoutLoadingPct">0%</div>
         <div class="scout-loading-text" id="scoutLoadingText">Preparing scout...</div>
         <div class="scout-loading-bar">
@@ -148,6 +204,7 @@
     <script src="/vendor/jquery.min.js"></script>
     <script src="/vendor/chessboard.min.js"></script>
     <script src="/vendor/chess.js"></script>
+    <script src="/vendor/html2canvas.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
