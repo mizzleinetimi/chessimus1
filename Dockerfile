@@ -4,8 +4,7 @@ FROM node:20-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends stockfish && \
     rm -rf /var/lib/apt/lists/* && \
-    which stockfish && \
-    stockfish <<< "quit"
+    which stockfish
 
 WORKDIR /app
 
