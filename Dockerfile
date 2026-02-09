@@ -3,7 +3,9 @@ FROM node:20-slim
 # Install Stockfish
 RUN apt-get update && \
     apt-get install -y --no-install-recommends stockfish && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    which stockfish && \
+    stockfish <<< "quit"
 
 WORKDIR /app
 
@@ -13,6 +15,8 @@ RUN npm ci --production
 
 # Copy app
 COPY . .
+
+ENV STOCKFISH_PATH=/usr/games/stockfish
 
 EXPOSE 3000
 
